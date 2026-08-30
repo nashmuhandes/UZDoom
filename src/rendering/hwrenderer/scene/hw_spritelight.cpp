@@ -98,6 +98,8 @@ LightProbe* FindLightProbe(FLevelLocals* level, float x, float y, float z, float
 
 bool TryGetLightProbeColor(FLevelLocals* level, AActor* actor, FVector3& out)
 {
+	return false; // light probes are currently disabled
+
 	if (!actor)
 	{
 		return false;
@@ -110,6 +112,8 @@ bool TryGetLightProbeColor(FLevelLocals* level, AActor* actor, FVector3& out)
 
 bool TryGetLightProbeColor(FLevelLocals* level, float x, float y, float z, FVector3& out, float floorz)
 {
+	return false; // light probes are currently disabled
+
 	if (LightProbe* probe = FindLightProbe(level, x, y, z, floorz))
 	{
 		out = probe->CalculateColor(level);
@@ -119,6 +123,24 @@ bool TryGetLightProbeColor(FLevelLocals* level, float x, float y, float z, FVect
 	{
 		return false;
 	}
+}
+
+static bool TraceLightVisbility(FLightNode* node, const FVector3& L, float dist)
+{
+	FDynamicLight* light = node->lightsource;
+	if (!light->Trace() || !level.levelMesh)
+		return true;
+
+	// Note: this is not thread safe (modifies validcount and calls other setup functions)
+	// FTraceResults results;
+	// return !Trace(light->Pos, light->Sector, DVector3(-L.X, -L.Y, -L.Z), dist, 0, ML_BLOCKING, nullptr, results);
+
+	return level.levelMesh->Trace(FVector3((float)light->Pos.X, (float)light->Pos.Y, (float)light->Pos.Z), FVector3(-L.X, -L.Y, -L.Z), dist);
+}
+
+static bool TraceSunVisibility(float x, float y, float z)
+{
+	return level.LMTextureCount != 0 && level.levelMesh->TraceSky(FVector3(x, y, z), level.SunDirection, 10000.0f);
 }
 
 //==========================================================================
@@ -134,6 +156,14 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, float x, float y, float z, FSec
 	float radius;
 
 	out[0] = out[1] = out[2] = 0.f;
+
+	if (TraceSunVisibility(x, y, z))
+	{
+		float si = Level->SunIntensity;
+		out[0] = Level->SunColor.X * si;
+		out[1] = Level->SunColor.Y * si;
+		out[2] = Level->SunColor.Z * si;
+	}
 
 	// Go through both light lists
 	if (Level->lightlists.flat_dlist.SSize() > sec->Index())
@@ -175,52 +205,58 @@ void HWDrawInfo::GetDynSpriteLight(AActor *self, float x, float y, float z, FSec
 				{
 					dist = sqrtf(dist);	// only calculate the square root if we really need it.
 
-					frac = 1.0f - (dist / radius);
-
-					if (light->IsSpot())
-					{
+					if (light->IsSpot() || light->Trace())
 						L *= -1.0f / dist;
-						DAngle negPitch = -light->Pitch;
-						DAngle Angle = light->Yaw;
-						double xyLen = negPitch.Cos();
-						double spotDirX = -Angle.Cos() * xyLen;
-						double spotDirY = -Angle.Sin() * xyLen;
-						double spotDirZ = -negPitch.Sin();
-						double cosDir = L.X * spotDirX + L.Y * spotDirY + L.Z * spotDirZ;
-						frac *= (float)smoothstep(light->pSpotOuterAngle->Cos(), light->pSpotInnerAngle->Cos(), cosDir);
-					}
 
-					if (frac > 0 && (!light->shadowmapped || (light->GetRadius() > 0 && screen->mShadowMap.ShadowTest(light->Pos, { x, y, z }))))
+					if (TraceLightVisbility(node, L, dist))
 					{
-						lr = light->GetRed() / 255.0f;
-						lg = light->GetGreen() / 255.0f;
-						lb = light->GetBlue() / 255.0f;
+						frac = 1.0f - (dist / radius);
 
-						if (light->target && (light->target->renderflags2 & RF2_LIGHTMULTALPHA))
+						if (light->IsSpot())
 						{
-							float alpha = (float)light->target->Alpha;
-							lr *= alpha;
-							lg *= alpha;
-							lb *= alpha;
+						
+							DAngle negPitch = -light->Pitch;
+							DAngle Angle = light->Yaw;
+							double xyLen = negPitch.Cos();
+							double spotDirX = -Angle.Cos() * xyLen;
+							double spotDirY = -Angle.Sin() * xyLen;
+							double spotDirZ = -negPitch.Sin();
+							double cosDir = L.X * spotDirX + L.Y * spotDirY + L.Z * spotDirZ;
+							frac *= (float)smoothstep(light->pSpotOuterAngle->Cos(), light->pSpotInnerAngle->Cos(), cosDir);
 						}
 
-						// Get GLDEFS intensity
-						lr *= light->GetLightDefIntensity();
-						lg *= light->GetLightDefIntensity();
-						lb *= light->GetLightDefIntensity();
-
-						if (light->IsSubtractive())
+						if (frac > 0 && (!light->shadowmapped || (light->GetRadius() > 0 && screen->mShadowMap.ShadowTest(light->Pos, { x, y, z }))))
 						{
-							float bright = (float)FVector3(lr, lg, lb).Length();
-							FVector3 lightColor(lr, lg, lb);
-							lr = (bright - lr) * -1;
-							lg = (bright - lg) * -1;
-							lb = (bright - lb) * -1;
-						}
+							lr = light->GetRed() / 255.0f;
+							lg = light->GetGreen() / 255.0f;
+							lb = light->GetBlue() / 255.0f;
 
-						out[0] += lr * frac;
-						out[1] += lg * frac;
-						out[2] += lb * frac;
+							if (light->target && (light->target->renderflags2 & RF2_LIGHTMULTALPHA))
+							{
+								float alpha = (float)light->target->Alpha;
+								lr *= alpha;
+								lg *= alpha;
+								lb *= alpha;
+							}
+
+							// Get GLDEFS intensity
+							lr *= light->GetLightDefIntensity();
+							lg *= light->GetLightDefIntensity();
+							lb *= light->GetLightDefIntensity();
+
+							if (light->IsSubtractive())
+							{
+								float bright = (float)FVector3(lr, lg, lb).Length();
+								FVector3 lightColor(lr, lg, lb);
+								lr = (bright - lr) * -1;
+								lg = (bright - lg) * -1;
+								lb = (bright - lb) * -1;
+							}
+
+							out[0] += lr * frac;
+							out[1] += lg * frac;
+							out[2] += lb * frac;
+						}
 					}
 				}
 			}
@@ -261,6 +297,11 @@ void hw_GetDynModelLight(AActor *self, FDynLightData &modellightdata)
 		float radiusSquared = actorradius * actorradius;
 		dl_validcount++;
 
+		if (TraceSunVisibility(x, y, z))
+		{
+			AddSunLightToList(modellightdata, x, y, z, self->Level->SunDirection, self->Level->SunColor * self->Level->SunIntensity);
+		}
+
 		BSPWalkCircle(self->Level, x, y, radiusSquared, [&](subsector_t *subsector) // Iterate through all subsectors potentially touched by actor
 		{
 			auto section = subsector->section;
@@ -288,7 +329,15 @@ void hw_GetDynModelLight(AActor *self, FDynLightData &modellightdata)
 						{
 							if (std::find(addedLights.begin(), addedLights.end(), light) == addedLights.end()) // Check if we already added this light from a different subsector
 							{
-								AddLightToList(modellightdata, group, light, true);
+								FVector3 L(dx, dy, dz);
+								float dist = sqrtf(distSquared);
+
+								if (light->Trace())
+									L *= 1.0f / dist;
+
+								if (TraceLightVisbility(node, L, dist))
+									AddLightToList(modellightdata, group, light, true);
+
 								addedLights.Push(light);
 							}
 						}
