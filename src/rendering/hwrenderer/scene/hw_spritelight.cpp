@@ -190,8 +190,11 @@ public:
 //
 //==========================================================================
 
-void HWDrawInfo::GetDynSpriteLight(AActor *self, float x, float y, float z, FSection *sec, int portalgroup, float *out)
+void HWDrawInfo::GetDynSpriteLight(AActor *self, float x, float y, float z, FSection *sec, int portalgroup, float *out, bool fullbright)
 {
+	if (fullbright)
+		return;
+
 	FDynamicLight *light;
 	float frac, lr, lg, lb;
 	float radius;
@@ -310,11 +313,11 @@ void HWDrawInfo::GetDynSpriteLight(AActor *thing, particle_t *particle, float *o
 {
 	if (thing && !(thing->renderflags2 & RF2_NODYNAMICLIGHTING))
 	{
-		GetDynSpriteLight(thing, (float)thing->X(), (float)thing->Y(), (float)thing->Center(), thing->section, thing->Sector->PortalGroup, out);
+		GetDynSpriteLight(thing, (float)thing->X(), (float)thing->Y(), (float)thing->Center(), thing->section, thing->Sector->PortalGroup, out, (thing->flags5 & MF5_BRIGHT));
 	}
 	else if (particle && !(particle->flags & SPF_NODYNAMICLIGHTING))
 	{
-		GetDynSpriteLight(NULL, (float)particle->Pos.X, (float)particle->Pos.Y, (float)particle->Pos.Z, particle->subsector->section, particle->subsector->sector->PortalGroup, out);
+		GetDynSpriteLight(NULL, (float)particle->Pos.X, (float)particle->Pos.Y, (float)particle->Pos.Z, particle->subsector->section, particle->subsector->sector->PortalGroup, out, (particle->flags & SPF_FULLBRIGHT));
 	}
 }
 
@@ -328,6 +331,9 @@ void hw_GetDynModelLight(AActor *self, FDynLightData &modellightdata)
 
 	if (self)
 	{
+		if ((self->flags5 & MF5_BRIGHT))
+			return;
+
 		auto &addedLights = addedLightsArray;	// avoid going through the thread local storage for each use.
 
 		addedLights.Clear();
